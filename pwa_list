@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo ""
+echo "==============================================================================="
+echo "                            INSTALLED PWAs DETECTED                            "
+echo "==============================================================================="
+
+DESKTOP_DIR="$HOME/.local/share/applications"
+
+# Find all .desktop files containing the --app flag
+mapfile -t PWA_FILES < <(grep -l -- "--app=" "$DESKTOP_DIR"/*.desktop 2>/dev/null || true)
+
+if [[ ${#PWA_FILES[@]} -eq 0 ]]; then
+    echo "No PWAs currently installed."
+else
+    # Print table header
+    printf "%-20s | %-15s | %s\n" "APP NAME" "PROFILE" "TARGET URL"
+    echo "---------------------+-----------------+---------------------------------------"
+    
+    for f in "${PWA_FILES[@]}"; do
+        # Extract Name
+        APP_NAME=$(grep "^Name=" "$f" | head -n 1 | cut -d= -f2-)
+        
+        # Extract URL using sed (looks for the string between --app=" and the next quote)
+        APP_URL=$(grep "^Exec=" "$f" | sed -n 's/.*--app="\([^"]*\)".*/\1/p')
+        
+        # Extract Profile using sed. If it doesn't exist, default to "Default"
+        PROFILE=$(grep "^Exec=" "$f" | sed -n 's/.*--profile-directory="\([^"]*\)".*/\1/p')
+        if [[ -z "$PROFILE" ]]; then
+            PROFILE="Default"
+        fi
+
+        # Print formatted row (truncating long names/URLs slightly to keep the table clean)
+        printf "%-20s | %-15s | %s\n" "${APP_NAME:0:20}" "${PROFILE:0:15}" "${APP_URL:0:38}"
+    done
+fi
+echo "==============================================================================="

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Get the true directory of the script, resolving the symlink
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+
+while true; do
+    clear
+    echo "====================================="
+    echo "          PWA MANAGER MENU           "
+    echo "====================================="
+    echo "1) Install a new PWA"
+    echo "2) Edit an existing PWA"
+    echo "3) Remove an existing PWA"
+    echo "4) List installed PWAs"
+    echo "5) Quit"
+    echo "====================================="
+    read -rp "Please select an option (1-5): " choice
+
+    case "$choice" in
+        1)
+            if [[ -x "$SCRIPT_DIR/pwa_install" ]]; then
+                "$SCRIPT_DIR/pwa_install" || true 
+            else
+                echo "Error: pwa_install not found or not executable in $SCRIPT_DIR."
+            fi
+            ;;
+        2)
+            if [[ -x "$SCRIPT_DIR/pwa_edit" ]]; then
+                "$SCRIPT_DIR/pwa_edit" || true
+            else
+                echo "Error: pwa_edit not found or not executable in $SCRIPT_DIR."
+            fi
+            ;;
+        3)
+            if [[ -x "$SCRIPT_DIR/pwa_remove" ]]; then
+                "$SCRIPT_DIR/pwa_remove" || true
+            else
+                echo "Error: pwa_remove not found or not executable in $SCRIPT_DIR."
+            fi
+            ;;
+        4)
+            if [[ -x "$SCRIPT_DIR/pwa_list" ]]; then
+                "$SCRIPT_DIR/pwa_list" || true
+            else
+                echo "Error: pwa_list not found or not executable in $SCRIPT_DIR."
+            fi
+            ;;
+        5)
+            echo "Exiting PWA Manager."
+            exit 0
+            ;;
+        *)
+            echo "Invalid option. Please choose a number between 1 and 5."
+            ;;
+    esac
+    
+    echo ""
+    read -rp "Press Enter to return to the menu..."
+done

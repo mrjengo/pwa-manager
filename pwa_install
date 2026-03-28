@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo ""
+echo "Scanning system and containerized paths for Chromium-based execution targets..."
+
+DETECTED_BROWSERS=()
+IFS=':' read -ra PATH_DIRS <<< "$PATH"
+
+EXTRA_PATHS=(
+    "$HOME/.local/bin"
+    "/var/lib/flatpak/exports/bin"
+    "$HOME/.local/share/flatpak/exports/bin"
+    "/snap/bin"
+)
+
+for ep in "${EXTRA_PATHS[@]}"; do
+    [[ -d "$ep" ]] && PATH_DIRS+=("$ep")
+done
+
+for dir in "${PATH_DIRS[@]}"; do
+    [[ -d "$dir" ]] || continue
+    
+    mapfile -t matches < <(find -L "$dir" -maxdepth 1 -type f -executable -regextype posix-extended -iregex '.*/(google-chrome.*|chromium.*|microsoft-edge.*|brave.*|com\.brave\.Browser|com\.google\.Chrome|org\.chromium\.Chromium|vivaldi.*|thorium.*|opera.*|yandex.*)' 2>/dev/null || true)
+    
+    for match in "${matches[@]}"; do
+        if [[ ! "$match" =~ (sandbox|driver|wrapper|crashpad|gnome-shell|flags) ]]; then
+            DETECTED_BROWSERS+=("$match")
+        fi
+    done
+done
+
+if [[ ${#DETECTED_BROWSERS[@]} -gt 0 ]]; then
+    mapfile -t DETECTED_BROWSERS < <(printf "%s\n" "${DETECTED_BROWSERS[@]}" | sort -u)
+fi
+
+if [[ ${#DETECTED_BROWSERS[@]} -eq 0 ]]; then
+    echo "CRITICAL: No compatible browser binaries found."
+    exit 1
+fi
+
+echo "====================================="
+echo " SELECT BROWSER ENGINE "
+echo "====================================="
+PS3="Select browser index: "
+
+select BROWSER_BIN in "${DETECTED_BROWSERS[@]}"; do
+    if [[ -n "$BROWSER_BIN" ]]; then
+        echo "Selected engine: $BROWSER_BIN"
+        break
+    else
+        echo "Invalid index. Select a valid number."
+    fi
+done
+
+echo "-------------------------------------"
+# 1. Validate App Name
+while true; do
+    read -rp "Enter PWA Name (e.g., MyApp): " APP_NAME
+    if [[ -n "${APP_NAME// /}" ]]; then
+        break
+    fi
+    echo "  -> Error: App Name cannot be empty."
+done
+
+# 2. Validate Target URL
+while true; do
+    read -rp "Enter Target URL (e.g., https://my.app.com): " APP_URL
+    if [[ "$APP_URL" =~ ^https?:// ]]; then
+        break
+    fi
+    echo "  -> Error: URL must start with http:// or https://"
+done
+
+# 3. Validate Icon URL
+while true; do
+	read -rp "Enter Custom Icon URL use PNG (e.g. https://www.dashboardicons.com): " ICON_URL
+    if [[ "$ICON_URL" =~ ^https?:// ]]; then
+        break
+    fi
+    echo "  -> Error: Icon URL must start with http:// or https://"
+done
+
+# 4. Target Browser Profile
+read -rp "Enter Browser Profile (Leave blank for 'Default', or type 'Profile 1', etc.): " PROFILE_INPUT
+PROFILE_DIR="${PROFILE_INPUT:-Default}"
+
+echo "-------------------------------------"
+
+SAFE_NAME="${APP_NAME,,}"
+SAFE_NAME="${SAFE_NAME// /_}"
+
+# Determine WM_CLASS prefix based on selected browser
+case "$BROWSER_BIN" in
+    *chromium*) WM_PREFIX="chromium" ;;
+    *brave*)   WM_PREFIX="brave" ;;
+    *edge*)    WM_PREFIX="msedge" ;;
+    *vivaldi*) WM_PREFIX="vivaldi" ;;
+    *thorium*) WM_PREFIX="thorium" ;;
+    *opera*)   WM_PREFIX="opera" ;;
+    *yandex*)  WM_PREFIX="yandex" ;;
+    *)         WM_PREFIX="chrome" ;; # Fallback for Chrome/Chromium
+esac
+
+# Extract domain and format profile name for Wayland WM_CLASS generation
+DOMAIN=$(echo "$APP_URL" | awk -F/ '{print $3}')
+PROFILE_CLASS="${PROFILE_DIR// /_}"
+WAYLAND_CLASS="${WM_PREFIX}-${DOMAIN}__-${PROFILE_CLASS}"
+
+DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/128x128/apps"
+DESKTOP_FILE="$DESKTOP_DIR/${SAFE_NAME}.desktop"
+ICON_FILE="$ICON_DIR/${SAFE_NAME}.png"
+
+mkdir -p "$DESKTOP_DIR" "$ICON_DIR"
+
+echo "Downloading custom icon payload..."
+if ! curl -A "Mozilla/5.0" -sL "$ICON_URL" -o "$ICON_FILE" -f; then
+    echo "  -> Error: Failed to download the icon. Continuing with a broken icon link..."
+fi
+
+cat <<EOF > "$DESKTOP_FILE"
+[Desktop Entry]
+Version=1.0
+Name=$APP_NAME
+Exec=$BROWSER_BIN --profile-directory="$PROFILE_DIR" --app="$APP_URL"
+Icon=$ICON_FILE
+StartupWMClass=$WAYLAND_CLASS
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+EOF
+
+chmod +x "$DESKTOP_FILE"
+update-desktop-database "$DESKTOP_DIR" || true
+gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || true
+
+echo "Installation complete."
+echo "Profile mapped to: $PROFILE_DIR"
+echo "WM_CLASS mapped to: $WAYLAND_CLASS"

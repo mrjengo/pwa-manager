@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo ""
+echo "====================================="
+echo "             PWA EDITOR              "
+echo "====================================="
+
+DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/128x128/apps"
+
+# Helper function to generate correct Wayland Class
+generate_wm_class() {
+    local target_file="$1"
+    local app_url="$2"
+    local profile_dir="$3"
+    
+    # Extract current browser binary from Exec line
+    local current_exec=$(grep "^Exec=" "$target_file" | cut -d= -f2- | awk '{print $1}')
+    
+    local wm_prefix="chrome"
+    case "$current_exec" in
+        *brave*)   wm_prefix="brave" ;;
+        *edge*)    wm_prefix="msedge" ;;
+        *vivaldi*) wm_prefix="vivaldi" ;;
+        *thorium*) wm_prefix="thorium" ;;
+        *opera*)   wm_prefix="opera" ;;
+        *yandex*)  wm_prefix="yandex" ;;
+	*chromium*) wm_prefix="chromium" ;;
+    esac
+
+    local domain=$(echo "$app_url" | awk -F/ '{print $3}')
+    local profile_class="${profile_dir// /_}"
+    echo "${wm_prefix}-${domain}__-${profile_class}"
+}
+
+# Discover installed PWAs
+mapfile -t PWA_FILES < <(grep -l -- "--app=" "$DESKTOP_DIR"/*.desktop 2>/dev/null || true)
+
+if [[ ${#PWA_FILES[@]} -eq 0 ]]; then
+    echo "No PWAs currently installed."
+    exit 0
+fi
+
+# Extract human-readable names
+declare -a PWA_NAMES
+for f in "${PWA_FILES[@]}"; do
+    APP_NAME=$(grep "^Name=" "$f" | head -n 1 | cut -d= -f2-)
+    PWA_NAMES+=("${APP_NAME:-Unknown}")
+done
+
+PS3="Select a PWA to edit: "
+OPTIONS=("${PWA_NAMES[@]}" "RETURN TO MAIN MENU")
+
+select opt in "${OPTIONS[@]}"; do
+    if [[ "$opt" == "RETURN TO MAIN MENU" ]]; then
+        echo "Canceled."
+        exit 0
+    elif [[ -n "$opt" ]]; then
+        # Resolve selected name back to target file index
+        for i in "${!PWA_NAMES[@]}"; do
+            if [[ "${PWA_NAMES[$i]}" == "$opt" ]]; then
+                TARGET_DESKTOP="${PWA_FILES[$i]}"
+                break
+            fi
+        done
+        
+        # Derive icon path
+        BASE_FILENAME=$(basename "$TARGET_DESKTOP" .desktop)
+        TARGET_ICON="$ICON_DIR/${BASE_FILENAME}.png"
+        break
+    else
+        echo "Invalid index. Select a valid number."
+    fi
+done
+
+echo "-------------------------------------"
+echo "Targeting: $opt"
+echo "-------------------------------------"
+PS3="Select what you want to edit (or 'Finish & Return'): "
+EDIT_OPTIONS=("Name" "URL" "Icon" "Browser" "Profile" "Finish & Return")
+
+select edit_opt in "${EDIT_OPTIONS[@]}"; do
+    case "$edit_opt" in
+        "Name")
+            read -rp "Enter new Name: " NEW_NAME
+            if [[ -n "${NEW_NAME// /}" ]]; then
+                sed -i "s/^Name=.*/Name=$NEW_NAME/" "$TARGET_DESKTOP"
+                echo "  -> Name updated to: $NEW_NAME"
+            else
+                echo "  -> Error: Name cannot be empty."
+            fi
+            ;;
+        "URL")
+            read -rp "Enter new Target URL: " NEW_URL
+            if [[ "$NEW_URL" =~ ^https?:// ]]; then
+                # Update URL
+                sed -i "s|--app=\"[^\"]*\"|--app=\"$NEW_URL\"|" "$TARGET_DESKTOP"
+                
+                # Rebuild WM_CLASS
+                PROFILE=$(grep "^Exec=" "$TARGET_DESKTOP" | sed -n 's/.*--profile-directory="\([^"]*\)".*/\1/p' || true)
+                PROFILE="${PROFILE:-Default}"
+                NEW_WM_CLASS=$(generate_wm_class "$TARGET_DESKTOP" "$NEW_URL" "$PROFILE")
+                sed -i "s/^StartupWMClass=.*/StartupWMClass=$NEW_WM_CLASS/" "$TARGET_DESKTOP"
+                
+                echo "  -> URL and WM_CLASS successfully updated."
+            else
+                echo "  -> Error: URL must start with http:// or https://"
+            fi
+            ;;
+        "Icon")
+		read -rp "Enter new Custom Icon URL use PNG (e.g. https://www.dashboardicons.com): " NEW_ICON_URL
+            if [[ "$NEW_ICON_URL" =~ ^https?:// ]]; then
+                echo "  -> Downloading new icon payload..."
+                if curl -A "Mozilla/5.0" -sL "$NEW_ICON_URL" -o "$TARGET_ICON" -f; then
+                    echo "  -> Icon successfully updated."
+                else
+                    echo "  -> Error: Failed to download the new icon."
+                fi
+            else
+                echo "  -> Error: Icon URL must start with http:// or https://"
+            fi
+            ;;
+        "Browser")
+            echo "Scanning system for Chromium-based browsers..."
+            DETECTED_BROWSERS=()
+            IFS=':' read -ra PATH_DIRS <<< "$PATH"
+            EXTRA_PATHS=("$HOME/.local/bin" "/var/lib/flatpak/exports/bin" "$HOME/.local/share/flatpak/exports/bin" "/snap/bin")
+            for ep in "${EXTRA_PATHS[@]}"; do [[ -d "$ep" ]] && PATH_DIRS+=("$ep"); done
+            for dir in "${PATH_DIRS[@]}"; do
+                [[ -d "$dir" ]] || continue
+                mapfile -t matches < <(find -L "$dir" -maxdepth 1 -type f -executable -regextype posix-extended -iregex '.*/(google-chrome.*|chromium.*|microsoft-edge.*|brave.*|com\.brave\.Browser|com\.google\.Chrome|org\.chromium\.Chromium|vivaldi.*|thorium.*|opera.*|yandex.*)' 2>/dev/null || true)
+                for match in "${matches[@]}"; do
+                    if [[ ! "$match" =~ (sandbox|driver|wrapper|crashpad|gnome-shell|flags) ]]; then
+                        DETECTED_BROWSERS+=("$match")
+                    fi
+                done
+            done
+            if [[ ${#DETECTED_BROWSERS[@]} -gt 0 ]]; then
+                mapfile -t DETECTED_BROWSERS < <(printf "%s\n" "${DETECTED_BROWSERS[@]}" | sort -u)
+            fi
+            
+            if [[ ${#DETECTED_BROWSERS[@]} -eq 0 ]]; then
+                echo "  -> CRITICAL: No compatible browser binaries found."
+            else
+                O_PS3=$PS3
+                PS3="Select new browser index: "
+                select BROWSER_BIN in "${DETECTED_BROWSERS[@]}"; do
+                    if [[ -n "$BROWSER_BIN" ]]; then
+                        sed -i "s|^Exec=[^ ]*|Exec=$BROWSER_BIN|" "$TARGET_DESKTOP"
+                        
+                        # Rebuild WM_CLASS for the new browser
+                        CURRENT_URL=$(grep "^Exec=" "$TARGET_DESKTOP" | sed -n 's/.*--app="\([^"]*\)".*/\1/p')
+                        PROFILE=$(grep "^Exec=" "$TARGET_DESKTOP" | sed -n 's/.*--profile-directory="\([^"]*\)".*/\1/p' || true)
+                        PROFILE="${PROFILE:-Default}"
+                        NEW_WM_CLASS=$(generate_wm_class "$TARGET_DESKTOP" "$CURRENT_URL" "$PROFILE")
+                        sed -i "s/^StartupWMClass=.*/StartupWMClass=$NEW_WM_CLASS/" "$TARGET_DESKTOP"
+                        
+                        echo "  -> Browser updated to: $BROWSER_BIN"
+                        break
+                    else
+                        echo "Invalid index."
+                    fi
+                done
+                PS3=$O_PS3
+            fi
+            ;;
+        "Profile")
+            read -rp "Enter new Browser Profile (Leave blank for 'Default'): " PROFILE_INPUT
+            PROFILE_DIR="${PROFILE_INPUT:-Default}"
+            
+            # 1. Update the Exec line
+            if grep -q "\-\-profile-directory=" "$TARGET_DESKTOP"; then
+                sed -i "s|--profile-directory=\"[^\"]*\"|--profile-directory=\"$PROFILE_DIR\"|" "$TARGET_DESKTOP"
+            else
+                sed -i "s|--app=|--profile-directory=\"$PROFILE_DIR\" --app=|" "$TARGET_DESKTOP"
+            fi
+            
+            # 2. Rebuild WM_CLASS so Wayland grouping doesn't break
+            CURRENT_URL=$(grep "^Exec=" "$TARGET_DESKTOP" | sed -n 's/.*--app="\([^"]*\)".*/\1/p')
+            NEW_WM_CLASS=$(generate_wm_class "$TARGET_DESKTOP" "$CURRENT_URL" "$PROFILE_DIR")
+            sed -i "s/^StartupWMClass=.*/StartupWMClass=$NEW_WM_CLASS/" "$TARGET_DESKTOP"
+            
+            echo "  -> Profile updated to: $PROFILE_DIR"
+            echo "  -> WM_CLASS updated to: $NEW_WM_CLASS"
+            ;;
+        "Finish & Return")
+            echo "Applying changes and exiting editor..."
+            break
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+    
+    echo ""
+    # Clear the REPLY variable to force the select loop to reprint the menu options
+    REPLY=
+done
+
+update-desktop-database "$DESKTOP_DIR" || true
+gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || true
+
+echo "Changes committed."

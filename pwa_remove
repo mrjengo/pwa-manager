@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# PWA Removal Logic: Interactive Purge with Discovery
+
+set -euo pipefail
+
+echo ""
+echo "WARNING: DESTRUCTIVE ACTION. Target .desktop files and icons will be permanently deleted."
+
+DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/128x128/apps"
+
+# Discover installed PWAs by identifying the --app flag in execution directives
+mapfile -t PWA_FILES < <(grep -l -- "--app=" "$DESKTOP_DIR"/*.desktop 2>/dev/null || true)
+
+if [[ ${#PWA_FILES[@]} -eq 0 ]]; then
+    echo "No PWA desktop entries detected in $DESKTOP_DIR."
+    exit 0
+fi
+
+# Extract human-readable names to populate the menu array
+declare -a PWA_NAMES
+for f in "${PWA_FILES[@]}"; do
+    APP_NAME=$(grep "^Name=" "$f" | head -n 1 | cut -d= -f2-)
+    PWA_NAMES+=("${APP_NAME:-Unknown}")
+done
+
+echo "====================================="
+echo " PWA PURGE MENU"
+echo "====================================="
+PS3="Select target index to remove: "
+
+OPTIONS=("${PWA_NAMES[@]}" "RETURN TO MAIN MENU")
+
+select opt in "${OPTIONS[@]}"; do
+    if [[ "$opt" == "RETURN TO MAIN MENU" ]]; then
+        echo "Canceling removal operation."
+        exit 0
+    elif [[ -n "$opt" ]]; then
+        # Resolve selected name back to target file index
+        for i in "${!PWA_NAMES[@]}"; do
+            if [[ "${PWA_NAMES[$i]}" == "$opt" ]]; then
+                TARGET_DESKTOP="${PWA_FILES[$i]}"
+                break
+            fi
+        done
+        
+        # Derive icon path from the desktop filename
+        BASE_FILENAME=$(basename "$TARGET_DESKTOP" .desktop)
+        TARGET_ICON="$ICON_DIR/${BASE_FILENAME}.png"
+        
+        echo "-------------------------------------"
+        # Confirmation prompt
+        read -rp "Are you sure you want to permanently delete '$opt'? [y/N]: " CONFIRM
+        
+        if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+            echo "Executing purge for: $opt"
+            
+            if [[ -f "$TARGET_DESKTOP" ]]; then
+                rm "$TARGET_DESKTOP"
+                echo "Removed Desktop Entry: $TARGET_DESKTOP"
+            fi
+            
+            if [[ -f "$TARGET_ICON" ]]; then
+                rm "$TARGET_ICON"
+                echo "Removed Icon Payload: $TARGET_ICON"
+            fi
+            
+            update-desktop-database "$DESKTOP_DIR" || true
+            gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || true
+            
+            echo "Purge sequence complete."
+        else
+            echo "Purge canceled. No files were deleted."
+        fi
+        
+        break
+    else
+        echo "Invalid index. Select a valid number."
+    fi
+done

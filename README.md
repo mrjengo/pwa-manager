@@ -17,12 +17,12 @@ Unlike native browser "Create Shortcut" features, this tool gives you absolute c
 
 Clone the repository and run the included installer script with administrator privileges.
 
-    ```
+    
     git clone https://github.com/mrjengo/pwa-manager.git
     cd pwa-manager
     chmod +x install.sh
     sudo ./install.sh
-    ```
+    
 
 The installer will:
 1. Create a dedicated directory at /opt/pwa.

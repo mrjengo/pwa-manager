@@ -1,54 +1,27 @@
 #!/usr/bin/env bash
+# Removes the PWA Manager program. Installed PWAs, their icons and the
+# downloaded browser engine are left untouched.
+#   ./uninstall.sh            remove the ~/.local install
+#   sudo ./uninstall.sh       remove the /usr/local install
+#   sudo ./uninstall.sh --legacy   also remove the old shell-script version (/opt/pwa)
 
 set -euo pipefail
 
-echo "================================================================="
-echo "                 PWA MANAGER SYSTEM UNINSTALLER                  "
-echo "================================================================="
-
-# 1. Root Privilege Check
-if [[ $EUID -ne 0 ]]; then
-   echo "Error: This uninstallation requires administrator privileges."
-   echo "Please run this script using: sudo ./uninstall.sh"
-   exit 1
-fi
-
-# 2. Warning and Confirmation
-echo "WARNING: This uninstaller ONLY removes the PWA Manager program."
-echo "It DOES NOT remove the actual PWAs you have installed."
-echo ""
-echo "It is highly recommended to use the 'pwa' tool (Option 3: Remove)"
-echo "to cleanly delete your installed PWAs BEFORE running this uninstaller."
-echo "================================================================="
-
-read -rp "Do you want to proceed with removing the PWA Manager? [y/N]: " CONFIRM
-
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo "Uninstallation canceled."
-    exit 0
-fi
-
-# 3. System Cleanup
-INSTALL_DIR="/opt/pwa"
-BIN_SYMLINK="/usr/local/bin/pwa"
-
-echo ""
-echo "[+] Removing system-wide command 'pwa'..."
-if [[ -L "$BIN_SYMLINK" || -e "$BIN_SYMLINK" ]]; then
-    rm -f "$BIN_SYMLINK"
-    echo "    -> Symlink removed."
+if [[ $EUID -eq 0 ]]; then
+    PREFIX="${PREFIX:-/usr/local}"
 else
-    echo "    -> Symlink not found. Skipping."
+    PREFIX="${PREFIX:-$HOME/.local}"
 fi
 
-echo "[+] Removing installation directory at $INSTALL_DIR..."
-if [[ -d "$INSTALL_DIR" ]]; then
-    rm -rf "$INSTALL_DIR"
-    echo "    -> Directory removed."
-else
-    echo "    -> Directory not found. Skipping."
+rm -fv "$PREFIX/bin/pwa" \
+    "$PREFIX/share/applications/pwa-manager.desktop" \
+    "$PREFIX/share/icons/hicolor/scalable/apps/pwa-manager.svg"
+
+if [[ "${1:-}" == "--legacy" ]]; then
+    rm -rfv /opt/pwa
+    if [[ -L /usr/local/bin/pwa ]]; then
+        rm -fv /usr/local/bin/pwa
+    fi
 fi
 
-echo "================================================================="
-echo " Uninstallation Complete!"
-echo "================================================================="
+echo "PWA Manager removed. Your installed PWAs were not touched; remove them first with 'pwa remove' if needed."

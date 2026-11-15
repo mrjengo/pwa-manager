@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use dialoguer::{Confirm, Input, Select};
 
 use pwa_manager::browser::{self, Browser};
+use pwa_manager::engine;
 use pwa_manager::manager::{self, Draft, IconChoice};
 use pwa_manager::model::{self, Pwa, DEFAULT_PROFILE};
 use pwa_manager::platform;
@@ -58,6 +59,21 @@ pub enum Command {
     },
     /// List detected browsers and their profiles
     Browsers,
+    /// Manage the bundled Ungoogled Chromium engine
+    Engine {
+        #[command(subcommand)]
+        action: EngineAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EngineAction {
+    /// Show the installed and latest available version
+    Status,
+    /// Download (or update to) the latest release
+    Install,
+    /// Delete the downloaded engine
+    Remove,
 }
 
 #[derive(Args, Default)]
@@ -98,6 +114,7 @@ pub fn run(command: Command) -> Result<()> {
         Command::Remove { app, yes } => remove(&find(&app)?, yes),
         Command::Launch { app } => find(&app)?.launch(),
         Command::Browsers => browsers(),
+        Command::Engine { action } => engine(action),
     }
 }
 
@@ -164,12 +181,63 @@ fn list(json: bool) -> Result<()> {
 fn browsers() -> Result<()> {
     let found = browser::detect();
     if found.is_empty() {
-        println!("No Chromium-based browser found.");
+        println!(
+            "No Chromium-based browser found. Run `pwa engine install` to download {}.",
+            engine::NAME
+        );
     }
     for b in found {
         println!("{} — {}", b.label(), b.path.display());
         for p in b.profiles() {
             println!("    {}", p.label());
+        }
+    }
+    Ok(())
+}
+
+fn engine(action: EngineAction) -> Result<()> {
+    match action {
+        EngineAction::Status => {
+            match engine::installed() {
+                Some(e) => println!(
+                    "Installed: {} {} ({})",
+                    engine::NAME,
+                    e.version,
+                    e.executable.display()
+                ),
+                None => println!("{} is not installed.", engine::NAME),
+            }
+            let latest = engine::latest()?;
+            println!("Latest:    {} ({} MB)", latest.version, latest.size >> 20);
+        }
+        EngineAction::Install => {
+            let release = engine::latest()?;
+            if engine::installed().is_some_and(|e| e.version == release.version) {
+                println!(
+                    "{} {} is already up to date.",
+                    engine::NAME,
+                    release.version
+                );
+                return Ok(());
+            }
+            println!(
+                "Downloading {} {} from {}",
+                engine::NAME,
+                release.version,
+                release.url
+            );
+            let installed = engine::install(&release, &mut |p| match p {
+                engine::Progress::Downloading { done, total } => {
+                    print!("\r  {:>4} / {} MB", done >> 20, total >> 20);
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                }
+                engine::Progress::Extracting => println!("\n  extracting…"),
+            })?;
+            println!("Installed {}", installed.executable.display());
+        }
+        EngineAction::Remove => {
+            engine::remove()?;
+            println!("{} removed.", engine::NAME);
         }
     }
     Ok(())
@@ -189,9 +257,23 @@ fn resolve_browser(spec: &str) -> Result<PathBuf> {
 }
 
 fn pick_browser(current: Option<&PathBuf>) -> Result<PathBuf> {
-    let found = browser::detect();
+    let mut found = browser::detect();
+    if found.is_empty() && interactive() {
+        let download = Confirm::new()
+            .with_prompt(format!(
+                "No Chromium-based browser found. Download {} ({})?",
+                engine::NAME,
+                engine::HOMEPAGE
+            ))
+            .default(true)
+            .interact()?;
+        if download {
+            self::engine(EngineAction::Install)?;
+            found = browser::detect();
+        }
+    }
     if found.is_empty() {
-        bail!("no Chromium-based browser found; install one or pass --browser <path>");
+        bail!("no Chromium-based browser found; run `pwa engine install` or pass --browser <path>");
     }
     if !interactive() {
         return Ok(found[0].path.clone());

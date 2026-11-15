@@ -25,11 +25,16 @@ pub struct Pwa {
 
 impl Pwa {
     /// Command-line arguments passed to the browser executable.
-    pub fn browser_args(&self) -> [String; 2] {
-        [
-            format!("--profile-directory={}", self.profile),
-            format!("--app={}", self.url),
-        ]
+    pub fn browser_args(&self) -> Vec<String> {
+        let mut args = Vec::with_capacity(3);
+        if crate::engine::owns(&self.browser) {
+            if let Ok(dir) = crate::engine::user_data_dir() {
+                args.push(format!("--user-data-dir={}", dir.display()));
+            }
+        }
+        args.push(format!("--profile-directory={}", self.profile));
+        args.push(format!("--app={}", self.url));
+        args
     }
 
     /// Starts the app detached from the current process.

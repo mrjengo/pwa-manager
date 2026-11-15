@@ -74,20 +74,27 @@ pub fn save(pwa: &Pwa, icon: Option<&RgbaImage>) -> Result<Pwa> {
         saved.icon = previous_icon.filter(|p| p.is_absolute() && p.exists());
     }
 
-    // Keep any extra browser flags the user added to an existing launcher.
+    // Keep any extra browser flags the user added to an existing launcher,
+    // except the ones regenerated below and a stale managed-engine data dir.
+    let generated = pwa.browser_args();
+    let flag = |arg: &str| arg.split_once('=').map_or(arg, |(k, _)| k).to_owned();
+    let generated_flags: Vec<String> = generated.iter().map(|a| flag(a)).collect();
+    let managed_data = crate::engine::user_data_dir()
+        .map(|d| format!("--user-data-dir={}", d.display()))
+        .ok();
     let extra_args: Vec<String> = entry
         .get("Exec")
         .map(|exec| {
             split_exec(&exec)
                 .into_iter()
                 .skip(1)
-                .filter(|a| !a.starts_with(PROFILE_FLAG) && !a.starts_with(APP_FLAG))
+                .filter(|a| !generated_flags.contains(&flag(a)) && managed_data.as_ref() != Some(a))
                 .collect()
         })
         .unwrap_or_default();
     let mut args = vec![pwa.browser.to_string_lossy().into_owned()];
     args.extend(extra_args);
-    args.extend(pwa.browser_args());
+    args.extend(generated);
 
     entry.set("Name", &pwa.name);
     entry.set("Exec", &join_exec(&args));

@@ -2,6 +2,7 @@
 //! launchers (Linux desktop entries, Windows Start Menu shortcuts, macOS app bundles).
 
 pub mod browser;
+pub mod engine;
 pub mod icon;
 pub mod manager;
 pub mod model;

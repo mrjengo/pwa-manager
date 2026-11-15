@@ -178,7 +178,9 @@ impl Browser {
     /// Human readable label, including the packaging format when relevant.
     pub fn label(&self) -> String {
         let p = self.path.to_string_lossy();
-        let kind = if p.contains("/flatpak/") {
+        let kind = if crate::engine::owns(&self.path) {
+            " (managed)"
+        } else if p.contains("/flatpak/") {
             " (Flatpak)"
         } else if p.starts_with("/snap/") {
             " (Snap)"
@@ -209,7 +211,9 @@ impl Browser {
 
     fn user_data_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
-        if cfg!(target_os = "linux") {
+        if crate::engine::owns(&self.path) {
+            dirs.extend(crate::engine::user_data_dir());
+        } else if cfg!(target_os = "linux") {
             let rel = self.family.linux_config;
             if let (Some(home), Some(file)) = (dirs::home_dir(), self.path.file_name()) {
                 let file = file.to_string_lossy();
@@ -294,11 +298,14 @@ fn read_profiles(local_state: &Path) -> Option<Vec<Profile>> {
     Some(profiles)
 }
 
-/// Every Chromium-based browser installed on this system, deduplicated.
+/// Every Chromium-based browser installed on this system, deduplicated; the
+/// managed engine (if downloaded) comes first.
 pub fn detect() -> Vec<Browser> {
     let mut seen = HashSet::new();
-    candidates()
+    crate::engine::installed()
+        .map(|e| e.executable)
         .into_iter()
+        .chain(candidates())
         .filter(|p| is_executable(p))
         .filter(|p| seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())))
         .map(Browser::new)
@@ -450,6 +457,15 @@ mod tests {
             id("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"),
             "chrome"
         );
+        assert_eq!(
+            id("C:\\Program Files\\Chromium\\Application\\chrome.exe"),
+            "chromium"
+        );
+        assert_eq!(
+            id("/data/pwa-manager/engine/ungoogled-chromium/ungoogled-chromium-1-x86_64_linux/chrome"),
+            "ungoogled-chromium"
+        );
+        assert_eq!(id("/opt/knowledge-base/bin/chrome"), "chrome");
         assert_eq!(
             id("C:\\Program Files\\Chromium\\Application\\chrome.exe"),
             "chromium"

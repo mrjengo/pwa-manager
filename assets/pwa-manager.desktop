@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PWA Manager
+Comment=Install websites as desktop apps
+Exec=pwa gui
+Icon=pwa-manager
+Terminal=false
+Categories=Network;WebBrowser;Utility;
+Keywords=pwa;web app;chromium;launcher;

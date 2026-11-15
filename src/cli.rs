@@ -27,6 +27,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Open the graphical interface (default when a display is available)
+    Gui,
     /// Interactive terminal menu
     Menu,
     /// List installed apps
@@ -108,6 +110,7 @@ impl Fields {
 pub fn run(command: Command) -> Result<()> {
     match command {
         Command::Menu => menu(),
+        Command::Gui => unreachable!("handled in main"),
         Command::List { json } => list(json),
         Command::Install(fields) => install(fields),
         Command::Edit { app, fields } => edit(&find(&app)?, fields),
